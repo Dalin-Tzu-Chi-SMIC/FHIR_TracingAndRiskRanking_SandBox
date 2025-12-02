@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Launch 疫調系統 SMART App</title>
+
+    <!-- SMART JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/fhirclient/build/fhir-client.js"></script>
+  </head>
+  <body>
+    <script>
+      // ★ 把這裡換成你在沙盒註冊的 client_id
+      const CLIENT_ID = "my_web_app";
+
+      // ★ scope 可依衛福部沙盒規定調整
+      const SCOPE = "launch openid fhirUser patient/*.read";
+
+      // ★ 授權完成後要導去哪一頁（就是你現在那個 index.html）
+      const REDIRECT_URI = "index.html";
+
+      // 進來時，沙盒會在 URL 加上 ?iss=...&launch=...
+      // fhir-client.js 會自動讀 iss / launch，不需要自己處理
+      FHIR.oauth2.authorize({
+        clientId: CLIENT_ID,
+        scope: SCOPE,
+        redirectUri: REDIRECT_URI,
+        // 如果你想自己 debug iss / launch，可以加上這個：
+        // iss: new URLSearchParams(location.search).get("iss"),
+        // launch: new URLSearchParams(location.search).get("launch"),
+      });
+    </script>
+  </body>
+</html>

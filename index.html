@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>大林慈濟醫院-臺灣50優良SMART on FHIR 疫調系統</title>
+
+    <!-- SMART JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/fhirclient/build/fhir-client.js"></script>
+
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #f5f5f5;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 8px;
+      }
+      .card {
+        background: #ffffff;
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        margin-bottom: 16px;
+        max-width: 1200px;
+      }
+      .form-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        min-width: 160px;
+      }
+      label {
+        font-size: 13px;
+        margin-bottom: 4px;
+        color: #333;
+      }
+      input[type="text"],
+      input[type="date"] {
+        padding: 6px 8px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+        font-size: 14px;
+      }
+      button {
+        padding: 8px 16px;
+        font-size: 14px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        background: #007bff;
+        color: #fff;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        font-size: 13px;
+        color: #555;
+        margin-top: 4px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+      }
+      thead {
+        background: #eee;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 4px 6px;
+        text-align: left;
+        white-space: nowrap;
+      }
+      tbody tr:nth-child(even) {
+        background: #fafafa;
+      }
+      .small {
+        font-size: 12px;
+        color: #777;
+      }
+      #rawJson {
+        width: 100%;
+        min-height: 120px;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+        white-space: pre;
+        overflow-x: auto;
+      }
+      @media (max-width: 768px) {
+        table {
+          font-size: 11px;
+        }
+        th,
+        td {
+          padding: 3px 4px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1
+        style="
+          font-size: 3rem;
+          font-weight: bold;
+          text-align: center;
+          font-family: '標楷體', 'DFKai-SB', system-ui, sans-serif;
+          line-height: 1.4;
+        "
+      >
+        臺灣50優良SMART ON FHIR應用程式<br />
+        大林慈濟醫院-疫調系統沙盒驗證
+      </h1>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="patientId">病人 Patient ID（FHIR）</label>
+          <input
+            type="text"
+            id="patientId"
+            placeholder="例如：123 或 Patient/123（SMART 模式會自動帶入）"
+          />
+        </div>
+        <div class="form-group">
+          <label for="beginDate">開始日期</label>
+          <input type="date" id="beginDate" />
+        </div>
+        <div class="form-group">
+          <label for="endDate">結束日期</label>
+          <input type="date" id="endDate" />
+        </div>
+        <div class="form-group" style="align-self: flex-end">
+          <button id="btnFetch">查詢 FHIR 資料</button>
+        </div>
+      </div>
+
+      <div class="status" id="statusText">尚未查詢。（尚未啟用 SMART）</div>
+      <div class="small" id="modeText">
+        模式：若由 <code>launch.html</code> 以 SMART on FHIR 啟動，會自動帶入
+        patient 與 token；若直接開本頁，則使用公開 hapi.fhir.tw 測試。
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>回傳結果</h2>
+      <div class="small">
+        欄位順序：日期、單位、職稱、身分證字號、姓名、備註、資料來源
+      </div>
+      <div style="overflow-x: auto; margin-top: 8px">
+        <table id="resultTable">
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>單位</th>
+              <th>職稱</th>
+              <th>身分證字號</th>
+              <th>姓名</th>
+              <th>備註</th>
+              <th>資料來源</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- 動態填入 -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>原始 JSON</h2>
+      <div class="small">顯示第一頁 Encounter Bundle（用來比對 FHIR 結構）。</div>
+      <textarea id="rawJson" readonly></textarea>
+    </div>
+
+    <script>
+      // =========================
+      // 設定 & 全域變數
+      // =========================
+
+      // 一般模式預設使用的公開 FHIR 伺服器（衛福部 hapi.fhir.tw）
+      const DEFAULT_FHIR_BASE_URL = "https://hapi.fhir.tw/fhir/";
+
+      let useSmart = false; // 是否為 SMART 啟動
+      let fhirBaseUrl = DEFAULT_FHIR_BASE_URL;
+      let accessToken = null;
+      let smartPatientId = null;
+
+      const btnFetch = document.getElementById("btnFetch");
+      const statusText = document.getElementById("statusText");
+      const modeText = document.getElementById("modeText");
+      const resultTableBody = document.querySelector("#resultTable tbody");
+      const rawJsonArea = document.getElementById("rawJson");
+
+      // 查詢按鈕
+      btnFetch.addEventListener("click", () => {
+        fetchContactHistory().catch((err) => {
+          console.error(err);
+          statusText.textContent = "發生錯誤：" + err.message;
+        });
+      });
+
+      // =========================
+      // SMART on FHIR ready()
+      // =========================
+      window.addEventListener("load", () => {
+        FHIR.oauth2
+          .ready()
+          .then(function (client) {
+            // 有 SMART context
+            useSmart = true;
+
+            // 取得 FHIR base URL
+            const baseUrl =
+              client.state.serverUrl ||
+              client.state.fhirServiceUrl ||
+              client.state.fhirBaseUrl;
+            if (baseUrl) {
+              fhirBaseUrl = baseUrl;
+            }
+
+            // 取得 access token
+            if (
+              client.state.tokenResponse &&
+              client.state.tokenResponse.access_token
+            ) {
+              accessToken = client.state.tokenResponse.access_token;
+            }
+
+            // 自動帶入病人 ID（如果有）
+            if (client.patient && client.patient.id) {
+              smartPatientId = client.patient.id;
+              const patientInput = document.getElementById("patientId");
+              patientInput.value = smartPatientId;
+              patientInput.readOnly = true;
+            }
+
+            statusText.textContent =
+              "已透過 SMART on FHIR 啟動，請選擇日期後查詢。";
+            modeText.textContent =
+              "模式：SMART 模式（FHIR base/病人由 SMART context 提供）。";
+          })
+          .catch(function (err) {
+            // 沒有 SMART context，改回一般模式
+            console.log("不是從 SMART 啟動，改用一般模式。", err);
+            useSmart = false;
+            fhirBaseUrl = DEFAULT_FHIR_BASE_URL;
+            accessToken = null;
+            smartPatientId = null;
+
+            statusText.textContent =
+              "尚未查詢。一般模式：直接使用公開 hapi.fhir.tw 測試。";
+            modeText.textContent =
+              "模式：一般模式（直接開 index.html，需手動輸入病人 ID）。";
+          });
+      });
+
+      // =========================
+      // 接觸史查詢主流程
+      // =========================
+      async function fetchContactHistory() {
+        const patientInput = document.getElementById("patientId").value.trim();
+        const beginDate = document.getElementById("beginDate").value;
+        const endDate = document.getElementById("endDate").value;
+
+        let patientParam = patientInput;
+
+        if (!patientParam) {
+          alert("請輸入 Patient ID（或由 SMART 帶入）。");
+          return;
+        }
+        if (!beginDate || !endDate) {
+          alert("請選擇開始與結束日期");
+          return;
+        }
+
+        // 若 patient 不是以 Patient/ 開頭，就自動補上
+        if (!patientParam.toLowerCase().startsWith("patient/")) {
+          patientParam = "Patient/" + patientParam;
+        }
+
+        // 初始化 UI
+        btnFetch.disabled = true;
+        statusText.textContent = "查詢中…";
+        resultTableBody.innerHTML = "";
+        rawJsonArea.value = "";
+
+        // Encounter 查詢 URL（注意：這裡用 fhirBaseUrl，不再寫死）
+        let url =
+          fhirBaseUrl.replace(/\/$/, "") +
+          "/Encounter" +
+          "?patient=" +
+          encodeURIComponent(patientParam) +
+          "&date=ge" +
+          beginDate +
+          "&date=le" +
+          endDate +
+          "&_include=Encounter:participant" +
+          "&_include=Encounter:service-provider" +
+          "&_count=50";
+
+        const allRows = [];
+        let pageCount = 0;
+        const maxPages = 5; // 安全起見，不要抓無限多頁
+        let firstBundleSaved = false;
+
+        while (url && pageCount < maxPages) {
+          pageCount++;
+          statusText.textContent = `查詢中… 第 ${pageCount} 頁`;
+
+          const bundle = await fetchJson(url);
+
+          // 存第一頁 bundle 到 textarea 方便除錯
+          if (!firstBundleSaved) {
+            rawJsonArea.value = JSON.stringify(bundle, null, 2);
+            firstBundleSaved = true;
+          }
+
+          const entries = bundle.entry || [];
+          if (!Array.isArray(entries) || entries.length === 0) {
+            break;
+          }
+
+          // 建 resource lookup：Practitioner / Organization
+          const practitionerMap = {};
+          const orgMap = {};
+          const encounters = [];
+
+          for (const entry of entries) {
+            const res = entry.resource;
+            if (!res || !res.resourceType) continue;
+
+            const rt = res.resourceType;
+            const id = res.id;
+
+            if (rt === "Encounter") {
+              encounters.push(res);
+            } else if (rt === "Practitioner" && id) {
+              const key = "Practitioner/" + id;
+              practitionerMap[key] = res;
+            } else if (rt === "Organization" && id) {
+              const key = "Organization/" + id;
+              orgMap[key] = res;
+            }
+          }
+
+          // Encounter → 多筆「接觸史」列
+          for (const enc of encounters) {
+            const dateTime = getEncounterDate(enc);
+            if (!dateTime) continue; // 沒日期就先略過
+
+            const rocDateIntStr = toRocDateTimeString(dateTime);
+
+            // 單位：Encounter.serviceProvider → Organization.name
+            let unitName = "";
+            if (enc.serviceProvider && enc.serviceProvider.reference) {
+              const ref = enc.serviceProvider.reference; // e.g. Organization/123
+              const org = orgMap[ref];
+              if (org && org.name) {
+                unitName = org.name;
+              }
+            }
+
+            // 備註：reasonCode[0].text 或 type[0].text
+            let note = "";
+            if (
+              Array.isArray(enc.reasonCode) &&
+              enc.reasonCode.length > 0 &&
+              enc.reasonCode[0].text
+            ) {
+              note = enc.reasonCode[0].text;
+            } else if (
+              Array.isArray(enc.type) &&
+              enc.type.length > 0 &&
+              enc.type[0].text
+            ) {
+              note = enc.type[0].text;
+            }
+
+            // participant 多人 → 多列
+            if (Array.isArray(enc.participant)) {
+              for (const part of enc.participant) {
+                // 職稱：participant.type[0].text
+                let roleText = "";
+                if (
+                  Array.isArray(part.type) &&
+                  part.type.length > 0 &&
+                  part.type[0].text
+                ) {
+                  roleText = part.type[0].text;
+                }
+
+                let staffName = "";
+                let staffIdno = "";
+
+                if (part.individual && part.individual.reference) {
+                  const indivRef = part.individual.reference; // Practitioner/xxx
+                  const prac = practitionerMap[indivRef];
+                  if (prac) {
+                    const info = getPractitionerNameAndId(prac);
+                    staffName = info.name || "";
+                    staffIdno = info.idNo || "";
+                  }
+                }
+
+                allRows.push({
+                  date: rocDateIntStr,
+                  unit: unitName,
+                  role: roleText,
+                  idNo: staffIdno,
+                  name: staffName,
+                  note: note,
+                  source: "Encounter(FHIR)",
+                });
+              }
+            }
+          }
+
+          // 找下一頁 link
+          let nextUrl = null;
+          if (Array.isArray(bundle.link)) {
+            for (const l of bundle.link) {
+              if (l.relation === "next" && l.url) {
+                nextUrl = l.url;
+                break;
+              }
+            }
+          }
+          url = nextUrl;
+        }
+
+        // 將 allRows 塞進 table
+        fillResultTable(allRows);
+
+        if (allRows.length === 0) {
+          statusText.textContent = "查詢完成，但沒有找到任何接觸史資料。";
+        } else {
+          statusText.textContent = `查詢完成，共 ${allRows.length} 筆接觸史。`;
+        }
+
+        btnFetch.disabled = false;
+      }
+
+      // 呼叫 fetch 並回傳 JSON（若為 SMART 模式則帶 Authorization header）
+      async function fetchJson(url) {
+        const headers = {};
+        if (useSmart && accessToken) {
+          headers["Authorization"] = "Bearer " + accessToken;
+        }
+
+        const resp = await fetch(url, { headers });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          throw new Error(
+            `FHIR 查詢失敗：${resp.status} ${resp.statusText} - ${txt}`
+          );
+        }
+        return await resp.json();
+      }
+
+      // 從 Encounter 取出一個代表性日期（先抓 period.start，其次 period.end，再來 meta.lastUpdated）
+      function getEncounterDate(enc) {
+        let dateStr = null;
+        if (enc.period && enc.period.start) {
+          dateStr = enc.period.start;
+        } else if (enc.period && enc.period.end) {
+          dateStr = enc.period.end;
+        } else if (enc.meta && enc.meta.lastUpdated) {
+          dateStr = enc.meta.lastUpdated;
+        }
+
+        if (!dateStr) return null;
+        const dt = new Date(dateStr);
+        if (isNaN(dt.getTime())) return null;
+        return dt;
+      }
+
+      // 轉成民國年月日時分字串，例如：11410060056
+      function toRocDateTimeString(dt) {
+        const rocYear = dt.getFullYear() - 1911;
+        const mm = String(dt.getMonth() + 1).padStart(2, "0");
+        const dd = String(dt.getDate()).padStart(2, "0");
+        const hh = String(dt.getHours()).padStart(2, "0");
+        const min = String(dt.getMinutes()).padStart(2, "0");
+        return String(rocYear).padStart(3, "0") + mm + dd + hh + min;
+      }
+
+      // 從 Practitioner 拿「姓名」與「身分證字號／員工編號」
+      function getPractitionerNameAndId(prac) {
+        let name = "";
+        let idNo = "";
+
+        if (Array.isArray(prac.name) && prac.name.length > 0) {
+          const n0 = prac.name[0];
+          if (n0.text) {
+            name = n0.text;
+          } else {
+            const family = n0.family || "";
+            let given = "";
+            if (Array.isArray(n0.given) && n0.given.length > 0) {
+              given = n0.given[0] || "";
+            }
+            name = (family + given).trim();
+          }
+        }
+
+        if (Array.isArray(prac.identifier) && prac.identifier.length > 0) {
+          const id0 = prac.identifier[0];
+          if (id0.value) {
+            idNo = id0.value;
+          }
+        }
+
+        return { name, idNo };
+      }
+
+      // 把 rows 塞進 table
+      function fillResultTable(rows) {
+        resultTableBody.innerHTML = "";
+        if (!rows || rows.length === 0) return;
+
+        for (const r of rows) {
+          const tr = document.createElement("tr");
+
+          const tdDate = document.createElement("td");
+          tdDate.textContent = r.date || "";
+          tr.appendChild(tdDate);
+
+          const tdUnit = document.createElement("td");
+          tdUnit.textContent = r.unit || "";
+          tr.appendChild(tdUnit);
+
+          const tdRole = document.createElement("td");
+          tdRole.textContent = r.role || "";
+          tr.appendChild(tdRole);
+
+          const tdIdNo = document.createElement("td");
+          tdIdNo.textContent = r.idNo || "";
+          tr.appendChild(tdIdNo);
+
+          const tdName = document.createElement("td");
+          tdName.textContent = r.name || "";
+          tr.appendChild(tdName);
+
+          const tdNote = document.createElement("td");
+          tdNote.textContent = r.note || "";
+          tr.appendChild(tdNote);
+
+          const tdSource = document.createElement("td");
+          tdSource.textContent = r.source || "";
+          tr.appendChild(tdSource);
+
+          resultTableBody.appendChild(tr);
+        }
+      }
+    </script>
+  </body>
+</html>
